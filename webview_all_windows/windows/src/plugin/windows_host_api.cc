@@ -1096,6 +1096,20 @@ WindowsHostApi::SetSurfaceAttached(int64_t texture_id, bool attached) {
   return std::nullopt;
 }
 
+std::optional<FlutterError>
+WindowsHostApi::SetSurfacePosition(int64_t texture_id,
+                                   const WindowsPointData &position) {
+  auto bridge = FindBridge(texture_id);
+  if (!bridge)
+    return InvalidIdError();
+  if (const auto error =
+          bridge->SetSurfacePosition(position.x(), position.y())) {
+    return CreateInitializationError(error->code, error->stage, error->message,
+                                     error->hresult, webview_runtime_version_);
+  }
+  return std::nullopt;
+}
+
 std::optional<FlutterError> WindowsHostApi::EnsureWinrtRuntime() {
   if (runtime_ && runtime_->available()) {
     return std::nullopt;

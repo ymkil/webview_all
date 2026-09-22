@@ -240,7 +240,9 @@ Webview::Webview(
     }
 
     settings->put_IsStatusBarEnabled(FALSE);
-    settings->put_AreDefaultContextMenusEnabled(FALSE);
+    // Let editable elements use Chromium's native clipboard/undo menu. Pages
+    // can still suppress contextmenu on non-editable content.
+    settings->put_AreDefaultContextMenusEnabled(TRUE);
   }
 
   EnableSecurityUpdates();
@@ -944,8 +946,8 @@ void Webview::RegisterEventHandlers() {
 }
 
 std::optional<RECT>
-Webview::CalculateOffscreenBounds(size_t width, size_t height,
-                                  float scale_factor) const {
+Webview::CalculateControllerBounds(size_t width, size_t height,
+                                   float scale_factor) const {
   if (parent_window_ == nullptr || !IsWindow(parent_window_) || width == 0 ||
       height == 0 || !std::isfinite(scale_factor) || scale_factor <= 0.0f) {
     return std::nullopt;
@@ -963,6 +965,19 @@ Webview::CalculateOffscreenBounds(size_t width, size_t height,
 
   const int64_t scaled_width = static_cast<int64_t>(scaled_width_value);
   const int64_t scaled_height = static_cast<int64_t>(scaled_height_value);
+  // Graphics capture reads the detached composition visual, not this HWND
+  // rectangle. Native UI (IME candidates and menus) nevertheless uses Bounds.
+  // Keep the initial offscreen fallback until Flutter supplies its placement.
+  if (surface_position_) {
+    const int64_t right =
+        static_cast<int64_t>(surface_position_->x) + scaled_width;
+    const int64_t bottom =
+        static_cast<int64_t>(surface_position_->y) + scaled_height;
+    if (!IsLong(right) || !IsLong(bottom))
+      return std::nullopt;
+    return RECT{surface_position_->x, surface_position_->y,
+                static_cast<LONG>(right), static_cast<LONG>(bottom)};
+  }
   POINT parent_origin = {};
   if (!ClientToScreen(parent_window_, &parent_origin)) {
     return std::nullopt;
@@ -988,7 +1003,7 @@ Webview::CalculateOffscreenBounds(size_t width, size_t height,
 
 bool Webview::UpdateControllerBounds(size_t width, size_t height,
                                      float scale_factor) {
-  const auto bounds = CalculateOffscreenBounds(width, height, scale_factor);
+  const auto bounds = CalculateControllerBounds(width, height, scale_factor);
   if (!bounds || !webview_controller_ ||
       FAILED(webview_controller_->put_RasterizationScale(scale_factor)) ||
       FAILED(webview_controller_->put_Bounds(*bounds))) {
@@ -1007,7 +1022,7 @@ HRESULT Webview::SetSurfaceSize(size_t width, size_t height,
     return E_UNEXPECTED;
   }
 
-  const auto bounds = CalculateOffscreenBounds(width, height, scale_factor);
+  const auto bounds = CalculateControllerBounds(width, height, scale_factor);
   if (!bounds) {
     return E_INVALIDARG;
   }
@@ -1038,6 +1053,25 @@ HRESULT Webview::SetVisible(bool visible) {
     return E_UNEXPECTED;
   }
   return webview_controller_->put_IsVisible(visible ? TRUE : FALSE);
+}
+
+HRESULT Webview::SetSurfacePosition(double x, double y) {
+  if (!IsValid() || !webview_controller_)
+    return E_UNEXPECTED;
+  if (!std::isfinite(x) || !std::isfinite(y) ||
+      x < (std::numeric_limits<LONG>::min)() ||
+      x > (std::numeric_limits<LONG>::max)() ||
+      y < (std::numeric_limits<LONG>::min)() ||
+      y > (std::numeric_limits<LONG>::max)())
+    return E_INVALIDARG;
+  const auto previous = surface_position_;
+  surface_position_ =
+      POINT{static_cast<LONG>(std::round(x)), static_cast<LONG>(std::round(y))};
+  if (!UpdateControllerBounds(surface_width_, surface_height_, scale_factor_)) {
+    surface_position_ = previous;
+    return E_FAIL;
+  }
+  return webview_controller_->NotifyParentWindowPositionChanged();
 }
 
 void Webview::NotifyParentWindowPositionChanged() {

@@ -619,6 +619,16 @@ void WebviewBridge::NotifyParentWindowPositionChanged() {
   webview_->NotifyParentWindowPositionChanged();
 }
 
+std::optional<WindowsRenderingError>
+WebviewBridge::SetSurfacePosition(double x, double y) {
+  const HRESULT result = webview_->SetSurfacePosition(x, y);
+  if (FAILED(result)) {
+    return RenderingError("webview_position_update_failed", "webview_position",
+                          "Updating the WebView position failed.", result);
+  }
+  return std::nullopt;
+}
+
 std::optional<WindowsRenderingError> WebviewBridge::UpdateRenderingState() {
   const bool should_render =
       surface_attached_ && surface_size_set_ && !suspended_;

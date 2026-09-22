@@ -223,6 +223,7 @@ public:
   bool IsValid() { return is_valid_; }
 
   HRESULT SetSurfaceSize(size_t width, size_t height, float scale_factor);
+  HRESULT SetSurfacePosition(double x, double y);
   HRESULT SetVisible(bool visible);
   void NotifyParentWindowPositionChanged();
   void SetCursorPos(double x, double y);
@@ -359,6 +360,7 @@ private:
   float scale_factor_ = 1.0;
   size_t surface_width_ = 1280;
   size_t surface_height_ = 720;
+  std::optional<POINT> surface_position_;
   wil::com_ptr<ICoreWebView2CompositionController> composition_controller_;
   wil::com_ptr<ICoreWebView2Controller3> webview_controller_;
   wil::com_ptr<ICoreWebView2> webview_;
@@ -415,8 +417,8 @@ private:
 
   bool CreateSurface(
       winrt::com_ptr<ABI::Windows::UI::Composition::ICompositor> compositor);
-  std::optional<RECT> CalculateOffscreenBounds(size_t width, size_t height,
-                                               float scale_factor) const;
+  std::optional<RECT> CalculateControllerBounds(size_t width, size_t height,
+                                                float scale_factor) const;
   bool UpdateControllerBounds(size_t width, size_t height, float scale_factor);
   void RegisterEventHandlers();
   void InvalidatePendingNavigationRequests();

@@ -1209,6 +1209,18 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
   }
 
+  Future<void> _setSurfacePosition(Offset position) async {
+    if (_isDisposed || _renderingError.value != null) return;
+    try {
+      await _hostApi.setSurfacePosition(
+        _textureId,
+        WindowsPointData(x: position.dx, y: position.dy),
+      );
+    } catch (error) {
+      _recordRenderingError(error);
+    }
+  }
+
   void _attachSurface() {
     if (_isDisposed) {
       return;
@@ -1311,6 +1323,7 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
   bool _visibilityCheckScheduled = false;
   bool _surfaceSizeReportScheduled = false;
   bool _renderingRetryInProgress = false;
+  Offset? _lastSurfacePosition;
 
   @override
   void initState() {
@@ -1348,6 +1361,7 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
     final bool controllerChanged = oldWidget.controller != widget.controller;
 
     if (controllerChanged) {
+      _lastSurfacePosition = null;
       oldWidget.controller._renderingError.removeListener(
         _handleRenderingErrorChanged,
       );
@@ -1438,6 +1452,7 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
         _handleSurfacePainted(false);
         return;
       }
+      _reportSurfacePosition();
       _scheduleVisibilityCheck();
     });
   }
@@ -1577,6 +1592,7 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
   }
 
   Future<void> _retryRendering() async {
+    _lastSurfacePosition = null;
     setState(() {
       _renderingRetryInProgress = true;
     });
@@ -1625,7 +1641,34 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
       final double scaleFactor =
           widget.scaleFactor ?? View.of(currentContext).devicePixelRatio;
       await _controller._setSize(size, scaleFactor);
+      if (mounted && generation == _surfaceSizeGeneration) {
+        _reportSurfacePosition();
+      }
     } catch (_) {}
+  }
+
+  void _reportSurfacePosition() {
+    if (!_controller.value.isInitialized) return;
+    final surfaceContext = _key.currentContext;
+    final box = surfaceContext?.findRenderObject() as RenderBox?;
+    if (surfaceContext == null ||
+        box == null ||
+        !box.attached ||
+        !box.hasSize) {
+      return;
+    }
+    // Widget placement uses the host view's DPR even when a custom rasterization
+    // scale is used for the web content. The native parent follows window moves.
+    final position =
+        box.localToGlobal(Offset.zero) *
+        View.of(surfaceContext).devicePixelRatio;
+    if (!position.dx.isFinite ||
+        !position.dy.isFinite ||
+        position == _lastSurfacePosition) {
+      return;
+    }
+    _lastSurfacePosition = position;
+    unawaited(_controller._setSurfacePosition(position));
   }
 
   @override

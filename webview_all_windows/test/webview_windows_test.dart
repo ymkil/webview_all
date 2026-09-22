@@ -478,6 +478,82 @@ void main() {
     expect(attachmentStates, <bool>[true, false, true]);
   });
 
+  testWidgets(
+    'native surface reports position after movement and DPI changes',
+    (WidgetTester tester) async {
+      final positions = <WindowsPointData>[];
+      final sizes = <WindowsSizeData>[];
+      _mockWindowsWebViewCreation(onSetSize: sizes.add);
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMessageHandler(_hostApiChannel('setSurfacePosition'), (
+        message,
+      ) async {
+        final args =
+            WindowsWebViewHostApi.pigeonChannelCodec.decodeMessage(message!)!
+                as List<Object?>;
+        positions.add(args[1]! as WindowsPointData);
+        return WindowsWebViewHostApi.pigeonChannelCodec.encodeMessage(<Object?>[
+          null,
+        ]);
+      });
+      addTearDown(
+        () => messenger.setMockMessageHandler(
+          _hostApiChannel('setSurfacePosition'),
+          null,
+        ),
+      );
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final controller = native_webview.WebviewController();
+      await controller.initialize();
+      // Retain the same widget: an ancestor can move a cached surface without
+      // changing its dimensions or rebuilding the Webview itself.
+      final webview = native_webview.Webview(controller);
+      Widget buildAt(double x) => Directionality(
+        textDirection: TextDirection.ltr,
+        child: Stack(
+          children: [
+            Positioned(
+              left: x,
+              top: 40,
+              width: 200,
+              height: 100,
+              child: webview,
+            ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(buildAt(20));
+      await tester.pump();
+      expect(positions, isNotEmpty);
+      expect([positions.last.x, positions.last.y], [20, 40]);
+      sizes.clear();
+      await tester.pumpWidget(buildAt(90));
+      await tester.pump();
+      expect([positions.last.x, positions.last.y], [90, 40]);
+      expect(
+        sizes,
+        isEmpty,
+        reason: 'Moving must not recreate the capture buffers',
+      );
+      tester.view.devicePixelRatio = 2;
+      await tester.pump();
+      await tester.pump();
+      expect([positions.last.x, positions.last.y], [180, 80]);
+      final count = positions.length;
+      await tester.pump();
+      expect(
+        positions.length,
+        count,
+        reason: 'Unchanged coordinates must not cross the platform channel',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.runAsync(controller.dispose);
+    },
+  );
+
   testWidgets('native surface updates an explicit scale factor', (
     WidgetTester tester,
   ) async {
@@ -2118,6 +2194,10 @@ void _mockWindowsWebViewCreation({
     }
     return _encodePigeonSuccess();
   });
+  messenger.setMockMessageHandler(
+    _hostApiChannel('setSurfacePosition'),
+    (ByteData? message) async => _encodePigeonSuccess(),
+  );
   messenger.setMockMessageHandler(_hostApiChannel('setSurfaceAttached'), (
     ByteData? message,
   ) async {
@@ -2200,6 +2280,7 @@ void _clearWindowsWebViewCreationMock() {
   );
   messenger.setMockMessageHandler(_hostApiChannel('setSize'), null);
   messenger.setMockMessageHandler(_hostApiChannel('setSurfaceAttached'), null);
+  messenger.setMockMessageHandler(_hostApiChannel('setSurfacePosition'), null);
   messenger.setMockMessageHandler(_hostApiChannel('disposeWebView'), null);
   messenger.setMockMethodCallHandler(
     MethodChannel('$windowsWebViewChannelPrefix/$_activeMockTextureId/events'),

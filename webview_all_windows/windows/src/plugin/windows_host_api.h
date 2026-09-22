@@ -193,6 +193,9 @@ private:
                                       const WindowsSizeData &size) override;
   std::optional<FlutterError> SetSurfaceAttached(int64_t texture_id,
                                                  bool attached) override;
+  std::optional<FlutterError>
+  SetSurfacePosition(int64_t texture_id,
+                     const WindowsPointData &position) override;
 
   WebviewBridge *FindBridge(int64_t texture_id);
   std::optional<FlutterError> InvalidIdError();

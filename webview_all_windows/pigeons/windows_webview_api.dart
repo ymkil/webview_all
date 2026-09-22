@@ -242,5 +242,8 @@ abstract class WindowsWebViewHostApi {
 
   void setSize(int textureId, WindowsSizeData size);
 
+  // Physical pixels relative to the Flutter host HWND, not the desktop.
+  void setSurfacePosition(int textureId, WindowsPointData position);
+
   void setSurfaceAttached(int textureId, bool attached);
 }
