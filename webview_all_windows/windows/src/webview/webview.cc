@@ -7,6 +7,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include <winrt/Windows.Foundation.h>
@@ -358,6 +359,72 @@ void Webview::EnableSecurityUpdates() {
 void Webview::RegisterEventHandlers() {
   if (!webview_) {
     return;
+  }
+  // Keep Chromium's editing commands and their native enabled/undo state.
+  // Do not change menus for messages, images, links, or other non-editable
+  // targets: the embedding page continues to own that policy.
+  const auto menu_webview = webview_.try_query<ICoreWebView2_11>();
+  const HRESULT menu_result =
+      menu_webview
+          ? menu_webview->add_ContextMenuRequested(
+                Callback<ICoreWebView2ContextMenuRequestedEventHandler>(
+                    [](ICoreWebView2 *,
+                       ICoreWebView2ContextMenuRequestedEventArgs *args)
+                        -> HRESULT {
+                      wil::com_ptr<ICoreWebView2ContextMenuTarget> target;
+                      BOOL editable = FALSE;
+                      if (FAILED(args->get_ContextMenuTarget(target.put())) ||
+                          !target ||
+                          FAILED(target->get_IsEditable(&editable))) {
+                        return args->put_Handled(TRUE);
+                      }
+                      if (!editable)
+                        return S_OK;
+
+                      // Fail closed if filtering fails, instead of exposing an
+                      // unfiltered browser menu. Restore native display on
+                      // success.
+                      args->put_Handled(TRUE);
+                      wil::com_ptr<ICoreWebView2ContextMenuItemCollection>
+                          items;
+                      UINT32 count = 0;
+                      if (FAILED(args->get_MenuItems(items.put())) || !items ||
+                          FAILED(items->get_Count(&count)))
+                        return S_OK;
+                      UINT32 retained = 0;
+                      for (UINT32 index = count; index > 0; --index) {
+                        wil::com_ptr<ICoreWebView2ContextMenuItem> item;
+                        wil::unique_cotaskmem_string name;
+                        COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND kind;
+                        if (FAILED(items->GetValueAtIndex(index - 1,
+                                                          item.put())) ||
+                            !item || FAILED(item->get_Name(&name)) ||
+                            FAILED(item->get_Kind(&kind)))
+                          return S_OK;
+                        const std::wstring_view command =
+                            name ? std::wstring_view(name.get())
+                                 : std::wstring_view();
+                        const bool allowed =
+                            kind ==
+                                COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND &&
+                            (command == L"undo" || command == L"redo" ||
+                             command == L"cut" || command == L"copy" ||
+                             command == L"paste" || command == L"selectAll");
+                        if (allowed) {
+                          ++retained;
+                        } else if (FAILED(
+                                       items->RemoveValueAtIndex(index - 1))) {
+                          return S_OK;
+                        }
+                      }
+                      return args->put_Handled(retained == 0 ? TRUE : FALSE);
+                    })
+                    .Get(),
+                &event_registrations_.context_menu_requested_token_)
+          : E_NOINTERFACE;
+  if (FAILED(menu_result) && settings_) {
+    // Older runtimes cannot enforce the editable-menu allowlist.
+    settings_->put_AreDefaultContextMenusEnabled(FALSE);
   }
 
   webview_->add_NavigationStarting(
